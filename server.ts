@@ -25,6 +25,12 @@ const expenseSchema = z.object({
   description: z.string().min(3).optional(),
   category_id: z.number().int().positive(),
 });
+const partialExpenseSchema = z.object({
+  amount: z.number().positive().optional(),
+  user_id: z.number().int().positive(),
+  description: z.string().min(3).optional(),
+  category_id: z.number().int().positive().optional(),
+});
 const categorySchema = z.object({
   name: z.string().min(3),
 });
@@ -57,7 +63,7 @@ app.post(
     const client = await pool.connect();
     try {
       const { name } = req.body;
-      await client.query("INSERT INTO category VALUES ($1)", [name]);
+      await client.query("INSERT INTO category (name) VALUES ($1)", [name]);
       res.status(201).json({ message: "Category added successfully" });
     } catch (err) {
       if (err && typeof err === "object" && "message" in err) {
@@ -137,7 +143,7 @@ app.get(
 );
 app.patch(
   "/expenses/:id",
-  validate({ body: expenseSchema, params: paramsSchema }),
+  validate({ body: partialExpenseSchema, params: paramsSchema }),
   async (req: Request, res: Response) => {
     const client = await pool.connect();
     try {
