@@ -25,6 +25,9 @@ const expenseSchema = z.object({
   description: z.string().min(3).optional(),
   category_id: z.number().int().positive(),
 });
+const categorySchema = z.object({
+  name: z.string().min(3),
+});
 const getExpenseSchema = z.object({
   user_id: z.number().int().positive(),
 });
@@ -32,6 +35,39 @@ const paramsSchema = z.object({
   id: z.coerce.number().int().positive(),
 });
 
+app.get(
+  "/categories",
+
+  async (req: Request, res: Response) => {
+    const client = await pool.connect();
+    try {
+      const result = await client.query("SELECT * FROM category");
+      res.status(200).json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: "Internal server error" });
+    } finally {
+      client.release();
+    }
+  },
+);
+app.post(
+  "/categories",
+  validate({ body: categorySchema }),
+  async (req: Request, res: Response) => {
+    const client = await pool.connect();
+    try {
+      const { name } = req.body;
+      await client.query("INSERT INTO category VALUES ($1)", [name]);
+      res.status(201).json({ message: "Category added successfully" });
+    } catch (err) {
+      if (err && typeof err === "object" && "message" in err) {
+        res.status(400).json({ error: err.message, details: err });
+      }
+    } finally {
+      client.release();
+    }
+  },
+);
 app.post(
   "/expenses",
   validate({ body: expenseSchema }),
@@ -84,7 +120,7 @@ app.get(
       const { id } = req.params;
       const { user_id } = req.body;
       const result = await client.query(
-        "SELECT * FROM expenses WHERE user_id = $1 AND id = $2 RETURNING *",
+        "SELECT * FROM expenses WHERE user_id = $1 AND id = $2 ",
         [user_id, id],
       );
       if (result.rows.length === 0) {
@@ -130,7 +166,7 @@ app.delete(
     const client = await pool.connect();
     try {
       const { id } = req.params;
-      const { user_id} = req.body;
+      const { user_id } = req.body;
       const result = await client.query(
         "DELETE FROM expenses WHERE user_id = $1 AND id = $2 RETURNING *",
         [user_id, id],
