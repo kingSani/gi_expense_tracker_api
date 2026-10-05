@@ -5,7 +5,7 @@ import express from "express";
 import pg from "pg";
 import validate from "express-zod-safe";
 import { z } from "zod";
-import { id } from "zod/locales";
+import { createClient } from "redis";
 
 const { Pool } = pg;
 const pool = new Pool({
@@ -15,6 +15,8 @@ const pool = new Pool({
   password: process.env.PASSWORD,
   port: Number(process.env.PORT_DB),
 });
+const redisClient = createClient();
+
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -41,13 +43,35 @@ const paramsSchema = z.object({
   id: z.coerce.number().int().positive(),
 });
 
+async function startServer() {
+  try {
+    await redisClient.connect();
+    console.log("Connected to Redis");
+
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => {
+      console.log(`Server listening on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error("Failed to initialize server:", error);
+    process.exit(1);
+  }
+}
+startServer();
 app.get(
   "/categories",
 
   async (req: Request, res: Response) => {
     const client = await pool.connect();
+
     try {
+      const cachedCategories = await redisClient.get("categories");
+      if (cachedCategories) {
+        res.status(200).json(JSON.parse(cachedCategories));
+        return;
+      }
       const result = await client.query("SELECT * FROM category");
+      await redisClient.setEx("categories", 3600, JSON.stringify(result.rows));
       res.status(200).json(result.rows);
     } catch (err) {
       res.status(500).json({ error: "Internal server error" });
@@ -64,6 +88,7 @@ app.post(
     try {
       const { name } = req.body;
       await client.query("INSERT INTO category (name) VALUES ($1)", [name]);
+      await redisClient.del("categories");
       res.status(201).json({ message: "Category added successfully" });
     } catch (err) {
       if (err && typeof err === "object" && "message" in err) {
@@ -150,7 +175,7 @@ app.patch(
       const { id } = req.params;
       const { user_id, amount, category_id, description } = req.body;
       const result = await client.query(
-        "UPDATE expenses SET amount = $1,description = $2, category_id = $3 WHERE user_id = $4 AND id = $5 RETURNING *",
+        "UPDATE expenses SET amount =COALESCE($1, amount),description = COALESCE($2, description), category_id = COALESCE($3, category_id) WHERE user_id = $4 AND id = $5 RETURNING *",
         [amount, description, category_id, user_id, id],
       );
       if (result.rows.length === 0) {
@@ -189,4 +214,3 @@ app.delete(
     }
   },
 );
-app.listen(process.env.PORT || 3000);
