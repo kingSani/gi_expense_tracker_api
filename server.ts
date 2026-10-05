@@ -110,6 +110,7 @@ app.post(
         "INSERT INTO expenses (amount, user_id, description, category_id) VALUES ($1, $2, $3, $4)",
         [amount, user_id, description, category_id],
       );
+      await redisClient.del("expenses");
       res.status(201).json({ message: "Expense added successfully" });
     } catch (err) {
       if (err && typeof err === "object" && "message" in err) {
@@ -125,15 +126,22 @@ app.get("/expenses", async (req: Request, res: Response) => {
   const client = await pool.connect();
   if (!req.body.user_id || typeof req.body.user_id !== "number") {
     res.status(400).json({ error: "user_id is required" });
-    client.release();
+
     return;
   }
+  const cacheKey = `expenses:${req.body.user_id}`;
   try {
+    const cachedExpenses = await redisClient.get(cacheKey);
+    if (cachedExpenses) {
+      res.status(200).json(JSON.parse(cachedExpenses));
+      return;
+    }
     const { user_id } = req.body;
     const result = await client.query(
       "SELECT * FROM expenses WHERE user_id = $1",
       [user_id],
     );
+    await redisClient.setEx(cacheKey, 3600, JSON.stringify(result.rows));
     res.status(200).json(result.rows);
   } catch (err) {
     res.status(500).json({ error: "Internal server error" });
@@ -150,6 +158,12 @@ app.get(
     try {
       const { id } = req.params;
       const { user_id } = req.body;
+      const cacheKey = `expense:${user_id}:${id}`;
+      const cachedExpense = await redisClient.get(cacheKey);
+      if (cachedExpense) {
+        res.status(200).json(JSON.parse(cachedExpense));
+        return;
+      }
       const result = await client.query(
         "SELECT * FROM expenses WHERE user_id = $1 AND id = $2 ",
         [user_id, id],
@@ -157,6 +171,7 @@ app.get(
       if (result.rows.length === 0) {
         res.status(404).json({ error: "Expense not found" });
       } else {
+        await redisClient.setEx(cacheKey, 3600, JSON.stringify(result.rows[0]));
         res.status(200).json(result.rows[0]);
       }
     } catch (err) {
@@ -181,6 +196,8 @@ app.patch(
       if (result.rows.length === 0) {
         res.status(404).json({ error: "Expense not found" });
       } else {
+        const cacheKey = `expense:${user_id}:${id}`;
+        await redisClient.setEx(cacheKey, 3600, JSON.stringify(result.rows[0]));
         res.status(200).json(result.rows[0]);
       }
     } catch (err) {
@@ -205,6 +222,8 @@ app.delete(
       if (result.rows.length === 0) {
         res.status(404).json({ error: "Expense not found" });
       } else {
+        const cacheKey = `expense:${user_id}:${id}`;
+        await redisClient.del(cacheKey);
         res.status(200).json(result.rows[0]);
       }
     } catch (err) {
